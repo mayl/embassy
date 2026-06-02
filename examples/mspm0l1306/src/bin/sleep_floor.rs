@@ -36,6 +36,21 @@ const DSLEEP_MODE: Dsleep = Dsleep::STANDBY;
 fn main() -> ! {
     let _p = embassy_mspm0::init(Config::default());
 
+    // CRITICAL: undo the HAL's MFCLK/MFPCLK enablement before disabling SYSOSC.
+    // `embassy_mspm0::init` sets MCLKCFG.USEMFTICK and GENCLKEN.MFPCLKEN, which
+    // request MFCLK (a 4 MHz tap off SYSOSC). On MSPM0, SYSOSCCFG.DISABLE is
+    // IGNORED while SYSOSC is still in use as a clock source, so the
+    // `set_disable(true)` below is a silent no-op as long as MFCLK is requested
+    // — SYSOSC keeps running and burns ~30–40 µA. Clearing these first lets the
+    // SYSOSC disable actually take effect. (This was the bulk of the measured
+    // 36 µA STANDBY floor vs. the ~1 µA datasheet typ. See mspm0sleep-6ht.)
+    SYSCTL.mclkcfg().modify(|w| {
+        w.set_usemftick(false);
+    });
+    SYSCTL.genclken().modify(|w| {
+        w.set_mfpclken(false);
+    });
+
     // Lowest-power clock policy:
     //  - SYSOSC fully off in idle modes (DISABLE) — ULPCLK falls back to LFCLK.
     //  - DISABLESTOP: SYSOSC also off in STOP mode.
