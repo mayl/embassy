@@ -372,6 +372,7 @@ impl<'d> Flex<'d> {
     async fn wait_armed(&mut self) {
         let pin = &self.pin;
         let key = pin.pin_port();
+        let _fast_wake = FastWake::new(pin.block(), pin.bit_index());
         let result = GPIO_WAIT_MAP
             .wait_for(key, || {
                 if pin.block().cpu_int().ris().read().dio(pin.bit_index()) {
@@ -402,6 +403,37 @@ impl<'d> Drop for Flex<'d> {
     #[inline]
     fn drop(&mut self) {
         self.set_as_disconnected();
+    }
+}
+
+/// Enables fast wake for a pin for as long as it exists.
+///
+/// The GPIO has no clock in STANDBY1, so an edge is only detected there on a pin with fast wake enabled.
+struct FastWake {
+    block: gpio::Gpio,
+    bit: usize,
+}
+
+impl FastWake {
+    fn new(block: gpio::Gpio, bit: usize) -> Self {
+        // A RMW operation.
+        critical_section::with(|_cs| {
+            block.fastwake().modify(|w| {
+                w.set_din(bit, true);
+            });
+        });
+
+        Self { block, bit }
+    }
+}
+
+impl Drop for FastWake {
+    fn drop(&mut self) {
+        critical_section::with(|_cs| {
+            self.block.fastwake().modify(|w| {
+                w.set_din(self.bit, false);
+            });
+        });
     }
 }
 
