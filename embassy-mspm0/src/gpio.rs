@@ -295,21 +295,27 @@ impl<'d> Flex<'d> {
     /// Wait until the pin is high. If it is already high, return immediately.
     #[inline]
     pub async fn wait_for_high(&mut self) {
+        // Arm before reading the level, so that an edge between the two is not lost.
+        self.arm(Polarity::Rise);
+
         if self.is_high() {
             return;
         }
 
-        self.wait_for_rising_edge().await
+        self.wait_armed().await
     }
 
     /// Wait until the pin is low. If it is already low, return immediately.
     #[inline]
     pub async fn wait_for_low(&mut self) {
+        // Arm before reading the level, so that an edge between the two is not lost.
+        self.arm(Polarity::Fall);
+
         if self.is_low() {
             return;
         }
 
-        self.wait_for_falling_edge().await
+        self.wait_armed().await
     }
 
     /// Wait for the pin to undergo a transition from low to high.
@@ -334,6 +340,12 @@ impl<'d> Flex<'d> {
     }
 
     async fn wait_inner(&mut self, polarity: Polarity) {
+        self.arm(polarity);
+        self.wait_armed().await
+    }
+
+    /// Select the edge to detect and discard any edge detected so far.
+    fn arm(&mut self, polarity: Polarity) {
         let pin = &self.pin;
         let block = pin.block();
 
@@ -354,7 +366,11 @@ impl<'d> Flex<'d> {
         block.cpu_int().iclr().write(|w| {
             w.set_dio(pin.bit_index(), true);
         });
+    }
 
+    /// Wait for the edge selected by [`Self::arm`].
+    async fn wait_armed(&mut self) {
+        let pin = &self.pin;
         let key = pin.pin_port();
         let result = GPIO_WAIT_MAP
             .wait_for(key, || {
