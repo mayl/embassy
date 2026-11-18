@@ -390,21 +390,27 @@ impl<'d> Flex<'d, Async> {
     /// Wait until the pin is high. If it is already high, return immediately.
     #[inline]
     pub async fn wait_for_high(&mut self) {
+        // Arm before reading the level, so that an edge between the two is not lost.
+        self.arm(Polarity::Rise);
+
         if self.is_high() {
             return;
         }
 
-        self.wait_for_rising_edge().await
+        self.wait_armed().await
     }
 
     /// Wait until the pin is low. If it is already low, return immediately.
     #[inline]
     pub async fn wait_for_low(&mut self) {
+        // Arm before reading the level, so that an edge between the two is not lost.
+        self.arm(Polarity::Fall);
+
         if self.is_low() {
             return;
         }
 
-        self.wait_for_falling_edge().await
+        self.wait_armed().await
     }
 
     /// Wait for the pin to undergo a transition from low to high.
@@ -429,10 +435,14 @@ impl<'d> Flex<'d, Async> {
     }
 
     fn wait_inner(&mut self, polarity: Polarity) -> impl Future<Output = ()> {
-        let info = self.info;
-        let pin = info.pin();
-        let state = self.state;
-        let block = info.block();
+        self.arm(polarity);
+        self.wait_armed()
+    }
+
+    /// Select the edge to detect and discard any edge detected so far.
+    fn arm(&mut self, polarity: Polarity) {
+        let pin = self.info.pin();
+        let block = self.info.block();
 
         // Selecting the event to trigger. A RMW operation.
         critical_section::with(|_cs| {
@@ -451,6 +461,14 @@ impl<'d> Flex<'d, Async> {
         block.cpu_int().iclr().write(|w| {
             w.set_dio(pin, true);
         });
+    }
+
+    /// Wait for the edge selected by [`Self::arm`].
+    fn wait_armed(&mut self) -> impl Future<Output = ()> {
+        let info = self.info;
+        let pin = info.pin();
+        let state = self.state;
+        let block = info.block();
 
         // FIXME: Get waker state
         poll_fn(move |cx| {
