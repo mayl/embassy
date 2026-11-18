@@ -339,6 +339,13 @@ impl<'d> Flex<'d> {
         self.wait_inner(Polarity::RiseFall)
     }
 
+    #[cfg(not(gpio_err_01))]
+    async fn wait_inner(&mut self, polarity: Polarity) {
+        self.arm(polarity);
+        self.wait_armed().await
+    }
+
+    #[cfg(gpio_err_01)]
     async fn wait_inner(&mut self, polarity: Polarity) {
         // The level the pin has after the edge, and the edge that takes it away from that level.
         let (level, away) = match polarity {

@@ -145,6 +145,20 @@ fn get_chip_cfgs(chip_name: &str) -> Vec<String> {
         cfgs.push("mspm0l222x".to_string());
     }
 
+    // The families whose errata sheet lists GPIO_ERR_01.
+    const GPIO_ERR_01: &[&str] = &[
+        "mspm0g110",
+        "mspm0g150",
+        "mspm0g310",
+        "mspm0g350",
+        "mspm0l110",
+        "mspm0l130",
+        "mspm0l134",
+    ];
+    if GPIO_ERR_01.iter().any(|family| chip_name.starts_with(family)) {
+        cfgs.push("gpio_err_01".to_string());
+    }
+
     cfgs
 }
 
