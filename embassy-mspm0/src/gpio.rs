@@ -470,8 +470,13 @@ impl<'d> Flex<'d, Async> {
         let state = self.state;
         let block = info.block();
 
+        let fast_wake = FastWake::new(block, pin);
+
         // FIXME: Get waker state
         poll_fn(move |cx| {
+            // Fast wake stays enabled until the future is dropped.
+            let _fast_wake = &fast_wake;
+
             // Register waker before checking if event has happened.
             state.waker.register(cx.waker());
 
@@ -489,6 +494,33 @@ impl<'d> Flex<'d, Async> {
 
             Poll::Pending
         })
+    }
+}
+
+/// Enables fast wake for a pin while alive.
+///
+/// Without fast wake, an edge is not detected in STANDBY1, where the clock that samples the pins is stopped.
+struct FastWake {
+    block: gpio::Gpio,
+    pin: usize,
+}
+
+impl FastWake {
+    fn new(block: gpio::Gpio, pin: usize) -> Self {
+        // Pin singletons are Send and share the same FASTWAKE register.
+        critical_section::with(|_cs| {
+            block.fastwake().modify(|w| w.set_din(pin, true));
+        });
+
+        Self { block, pin }
+    }
+}
+
+impl Drop for FastWake {
+    fn drop(&mut self) {
+        critical_section::with(|_cs| {
+            self.block.fastwake().modify(|w| w.set_din(self.pin, false));
+        });
     }
 }
 
