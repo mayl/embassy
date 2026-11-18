@@ -434,9 +434,57 @@ impl<'d> Flex<'d, Async> {
         self.wait_inner(Polarity::RiseFall)
     }
 
+    #[cfg(not(gpio_err_01))]
     fn wait_inner(&mut self, polarity: Polarity) -> impl Future<Output = ()> {
         self.arm(polarity);
         self.wait_armed()
+    }
+
+    #[cfg(gpio_err_01)]
+    async fn wait_inner(&mut self, polarity: Polarity) {
+        // The level the pin has after the edge, and the edge that takes it away from that level.
+        let (level, away) = match polarity {
+            Polarity::Rise => (Some(true), Polarity::Fall),
+            Polarity::Fall => (Some(false), Polarity::Rise),
+            _ => (None, polarity),
+        };
+
+        // GPIO_ERR_01: if the chip enters STANDBY1 with the pin already at `level`, no further edge is detected.
+        // So if the pin is found there (step 0), wait for it to leave (step 1) before waiting for the edge (step 2).
+        // Each step arms an edge and then reads the pin, so the chip never sleeps armed for an edge that the pin's
+        // level rules out.
+        let mut step = 0;
+
+        loop {
+            self.arm(if step == 1 { away } else { polarity });
+
+            // The level must be read before the event flag: an edge after arming then shows up in at least one.
+            let at_level = level == Some(self.is_high());
+            let edge_detected = self.info.block().cpu_int().ris().read().dio(self.info.pin());
+
+            match step {
+                // At the level with no edge since arming, so the pin was there all along.
+                0 if at_level && !edge_detected => {
+                    step = 1;
+                    continue;
+                }
+                // Already left the level.
+                1 if !at_level => {
+                    step = 2;
+                    continue;
+                }
+                // Left the level and is back at it, so the edge happened before it was armed.
+                2 if at_level => return,
+                _ => {}
+            }
+
+            self.wait_armed().await;
+
+            if step != 1 {
+                return;
+            }
+            step = 2;
+        }
     }
 
     /// Select the edge to detect and discard any edge detected so far.
